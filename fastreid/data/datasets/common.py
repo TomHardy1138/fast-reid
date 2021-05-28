@@ -15,8 +15,8 @@ from torchvision.datasets import ImageFolder
 
 @DATASET_REGISTRY.register()
 class SimilarityDatasetCommon(ImageDataset):
-    dataset_dir = "FOLDERS_V2"
-    test_dataset_dir = "common_test"
+    dataset_dir = "custom_train" # "FOLDERS_V2"
+    test_dataset_dir = "custom_test"
 
     def __init__(self, root='', **kwargs):
         self.root = osp.abspath(osp.expanduser(root))
