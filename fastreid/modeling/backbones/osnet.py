@@ -219,11 +219,34 @@ class ChannelGate(nn.Module):
         input = x
         x = self.global_avgpool(x)
         x = self.fc1(x)
-        if self.norm1 is not None: x = self.norm1(x)
+        if self.norm1 is not None:
+            x = self.norm1(x)
         x = self.relu(x)
         x = self.fc2(x)
         x = self.gate_activation(x)
-        if self.return_gates: return x
+        if self.return_gates:
+            return x
+        return input * x
+
+
+class LCTGate(nn.Module):
+    def __init__(self, channels, groups=16):
+        super(LCTGate, self).__init__()
+        assert channels > 0
+        assert groups > 0
+        while channels % groups != 0:
+            groups //= 2
+        self.gn = nn.GroupNorm(groups, channels, affine=True)
+        nn.init.ones_(self.gn.bias)
+        nn.init.zeros_(self.gn.weight)
+        self.global_avgpool = nn.AdaptiveAvgPool2d(1)
+        self.gate_activation = nn.Sigmoid()
+
+    def forward(self, x):
+        input = x
+        x = self.global_avgpool(x)
+        x = self.gn(x)
+        x = self.gate_activation(x)
         return input * x
 
 
@@ -258,7 +281,7 @@ class OSBlock(nn.Module):
             LightConv3x3(mid_channels, mid_channels, bn_norm),
             LightConv3x3(mid_channels, mid_channels, bn_norm),
         )
-        self.gate = ChannelGate(mid_channels)
+        self.gate = LCTGate(mid_channels) # ChannelGate(mid_channels)
         self.conv3 = Conv1x1Linear(mid_channels, out_channels, bn_norm)
         self.downsample = None
         if in_channels != out_channels:
