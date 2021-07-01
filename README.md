@@ -4,10 +4,12 @@
 
 Gitter: [fast-reid/community](https://gitter.im/fast-reid/community?utm_source=share-link&utm_medium=link&utm_campaign=share-link)
 
-FastReID is a research platform that implements state-of-the-art re-identification algorithms. It is a groud-up rewrite of the previous version, [reid strong baseline](https://github.com/michuanhaohao/reid-strong-baseline).
+FastReID is a research platform that implements state-of-the-art re-identification algorithms. It is a ground-up rewrite of the previous version, [reid strong baseline](https://github.com/michuanhaohao/reid-strong-baseline).
 
 ## What's New
 
+- [May 2021] Vision Transformer backbone supported, see `configs/Market1501/bagtricks_vit.yml`.
+- [Apr 2021] Partial FC supported in [FastFace](projects/FastFace)!
 - [Jan 2021] TRT network definition APIs in [FastRT](projects/FastRT) has been released! 
 Thanks for [Darren](https://github.com/TCHeish)'s contribution.
 - [Jan 2021] NAIC20(reid track) [1-st solution](projects/NAIC20) based on fastreid has been released！
@@ -23,7 +25,8 @@ Support many tasks beyond reid, such image retrieval and face recognition. See [
 - Can be used as a library to support [different projects](projects) on top of it. We'll open source more research projects in this way.
 - Remove [ignite](https://github.com/pytorch/ignite)(a high-level library) dependency and powered by [PyTorch](https://pytorch.org/).
 
-We write a [chinese blog](https://l1aoxingyu.github.io/blogpages/reid/2020/05/29/fastreid.html) about this toolbox.
+We write a [fastreid intro](https://l1aoxingyu.github.io/blogpages/reid/fastreid/2020/05/29/fastreid.html) 
+and [fastreid v1.0](https://l1aoxingyu.github.io/blogpages/reid/fastreid/2021/04/28/fastreid-v1.html) about this toolbox.
 
 ## Changelog
 

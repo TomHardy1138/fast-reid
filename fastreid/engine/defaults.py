@@ -15,7 +15,7 @@ import sys
 from collections import OrderedDict
 
 import torch
-import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel
 
 from fastreid.data import build_reid_test_loader, build_reid_train_loader
 from fastreid.evaluation import (ReidEvaluator,
@@ -31,8 +31,6 @@ from fastreid.utils.file_io import PathManager
 from fastreid.utils.logger import setup_logger
 from . import hooks
 from .train_loop import TrainerBase, AMPTrainer, SimpleTrainer
-from torch.nn.parallel import DistributedDataParallel
-
 
 __all__ = ["default_argument_parser", "default_setup", "DefaultPredictor", "DefaultTrainer"]
 
@@ -86,7 +84,7 @@ def default_setup(cfg, args):
         PathManager.mkdirs(output_dir)
 
     rank = comm.get_rank()
-    setup_logger(output_dir, distributed_rank=rank, name="fvcore")
+    # setup_logger(output_dir, distributed_rank=rank, name="fvcore")
     logger = setup_logger(output_dir, distributed_rank=rank)
 
     logger.info("Rank of current process: {}. World size: {}".format(rank, comm.get_world_size()))
@@ -150,13 +148,10 @@ class DefaultPredictor:
         Returns:
             predictions (torch.tensor): the output features of the model
         """
-        inputs = {"images": image}
+        inputs = {"images": image.to(self.model.device)}
         with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
             predictions = self.model(inputs)
-            # Normalize feature to compute cosine distance
-            features = F.normalize(predictions)
-            features = features.cpu().data
-            return features
+        return predictions.cpu()
 
 
 class DefaultTrainer(TrainerBase):
@@ -214,10 +209,9 @@ class DefaultTrainer(TrainerBase):
             # for part of the parameters is not updated.
             model = DistributedDataParallel(
                 model, device_ids=[comm.get_local_rank()], broadcast_buffers=False,
-                find_unused_parameters=True
             )
 
-        self._trainer = (AMPTrainer if cfg.SOLVER.FP16_ENABLED else SimpleTrainer)(
+        self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
             model, data_loader, optimizer
         )
 
@@ -283,17 +277,6 @@ class DefaultTrainer(TrainerBase):
             hooks.LRScheduler(self.optimizer, self.scheduler),
         ]
 
-        # if cfg.SOLVER.SWA.ENABLED:
-        #     ret.append(
-        #         hooks.SWA(
-        #             cfg.SOLVER.MAX_ITER,
-        #             cfg.SOLVER.SWA.PERIOD,
-        #             cfg.SOLVER.SWA.LR_FACTOR,
-        #             cfg.SOLVER.SWA.ETA_MIN_LR,
-        #             cfg.SOLVER.SWA.LR_SCHED,
-        #         )
-        #     )
-
         if cfg.TEST.PRECISE_BN.ENABLED and hooks.get_bn_modules(self.model):
             logger.info("Prepare precise BN dataset")
             ret.append(hooks.PreciseBN(
@@ -304,12 +287,12 @@ class DefaultTrainer(TrainerBase):
                 cfg.TEST.PRECISE_BN.NUM_ITER,
             ))
 
-        ret.append(hooks.LayerFreeze(
-            self.model,
-            cfg.MODEL.FREEZE_LAYERS,
-            cfg.SOLVER.FREEZE_ITERS,
-            cfg.SOLVER.FREEZE_FC_ITERS,
-        ))
+        if len(cfg.MODEL.FREEZE_LAYERS) > 0 and cfg.SOLVER.FREEZE_ITERS > 0:
+            ret.append(hooks.LayerFreeze(
+                self.model,
+                cfg.MODEL.FREEZE_LAYERS,
+                cfg.SOLVER.FREEZE_ITERS,
+            ))
 
         # Do PreciseBN before checkpointer, because it updates the model and need to
         # be saved by checkpointer.
@@ -414,7 +397,7 @@ class DefaultTrainer(TrainerBase):
         """
         logger = logging.getLogger(__name__)
         logger.info("Prepare training set")
-        return build_reid_train_loader(cfg)
+        return build_reid_train_loader(cfg, combineall=cfg.DATASETS.COMBINEALL)
 
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
@@ -424,7 +407,7 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`fastreid.data.build_reid_test_loader`.
         Overwrite it if you'd like a different data loader.
         """
-        return build_reid_test_loader(cfg, dataset_name)
+        return build_reid_test_loader(cfg, dataset_name=dataset_name)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_dir=None):
@@ -453,7 +436,7 @@ class DefaultTrainer(TrainerBase):
                 )
                 results[dataset_name] = {}
                 continue
-            results_i = inference_on_dataset(model, data_loader, evaluator, flip_test=cfg.TEST.FLIP_ENABLED)
+            results_i = inference_on_dataset(model, data_loader, evaluator, flip_test=cfg.TEST.FLIP.ENABLED)
             results[dataset_name] = results_i
 
             if comm.is_main_process():
@@ -503,5 +486,5 @@ class DefaultTrainer(TrainerBase):
 
 
 # Access basic attributes from the underlying trainer
-for _attr in ["model", "data_loader", "optimizer"]:
-    setattr(DefaultTrainer, _attr, property(lambda self, x=_attr: getattr(self._trainer, x)))
+for _attr in ["model", "data_loader", "optimizer", "grad_scaler"]:
+    setattr(DefaultTrainer, _attr, property(lambda self, x=_attr: getattr(self._trainer, x, None)))

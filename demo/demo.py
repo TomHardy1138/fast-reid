@@ -9,20 +9,23 @@ import glob
 import os
 import sys
 
+import torch.nn.functional as F
 import cv2
 import numpy as np
 import tqdm
 from torch.backends import cudnn
 
-sys.path.append('..')
+sys.path.append('.')
 
 from fastreid.config import get_cfg
 from fastreid.utils.logger import setup_logger
 from fastreid.utils.file_io import PathManager
 
 from predictor import FeatureExtractionDemo
+
 # import some modules added in project like this below
-# from projects.PartialReID.partialreid import *
+# sys.path.append("projects/PartialReID")
+# from partialreid import *
 
 cudnn.benchmark = True
 setup_logger(name="fastreid")
@@ -70,6 +73,13 @@ def get_parser():
     return parser
 
 
+def postprocess(features):
+    # Normalize feature to compute cosine distance
+    features = F.normalize(features)
+    features = features.cpu().data.numpy()
+    return features
+
+
 if __name__ == '__main__':
     args = get_parser().parse_args()
     cfg = setup_cfg(args)
@@ -83,5 +93,5 @@ if __name__ == '__main__':
         for path in tqdm.tqdm(args.input):
             img = cv2.imread(path)
             feat = demo.run_on_image(img)
-            feat = feat.numpy()
-            np.save(os.path.join(args.output, path.replace('.jpg', '.npy').split('/')[-1]), feat)
+            feat = postprocess(feat)
+            np.save(os.path.join(args.output, os.path.basename(path).split('.')[0] + '.npy'), feat)

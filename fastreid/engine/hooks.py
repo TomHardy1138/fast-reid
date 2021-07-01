@@ -10,6 +10,7 @@ import time
 from collections import Counter
 
 import torch
+from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
 from fastreid.evaluation.testing import flatten_results_dict
@@ -225,6 +226,7 @@ class LRScheduler(HookBase):
         """
         self._optimizer = optimizer
         self._scheduler = scheduler
+        self._scale = 0
 
         # NOTE: some heuristics on what LR to summarize
         # summarize the param group with most parameters
@@ -245,18 +247,23 @@ class LRScheduler(HookBase):
                     self._best_param_group_id = i
                     break
 
+    def before_step(self):
+        if self.trainer.grad_scaler is not None:
+            self._scale = self.trainer.grad_scaler.get_scale()
+
     def after_step(self):
         lr = self._optimizer.param_groups[self._best_param_group_id]["lr"]
         self.trainer.storage.put_scalar("lr", lr, smoothing_hint=False)
 
         next_iter = self.trainer.iter + 1
         if next_iter <= self.trainer.warmup_iters:
-            self._scheduler["warmup_sched"].step()
+            if self.trainer.grad_scaler is None or self._scale == self.trainer.grad_scaler.get_scale():
+                self._scheduler["warmup_sched"].step()
 
     def after_epoch(self):
         next_iter = self.trainer.iter + 1
         next_epoch = self.trainer.epoch + 1
-        if next_iter > self.trainer.warmup_iters and next_epoch >= self.trainer.delay_epochs:
+        if next_iter > self.trainer.warmup_iters and next_epoch > self.trainer.delay_epochs:
             self._scheduler["lr_sched"].step()
 
 
@@ -359,6 +366,7 @@ class EvalHook(HookBase):
                     )
             self.trainer.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
+        torch.cuda.empty_cache()
         # Evaluation may take different time among workers.
         # A barrier make them start the next iteration together.
         comm.synchronize()
@@ -447,19 +455,16 @@ class PreciseBN(HookBase):
 
 
 class LayerFreeze(HookBase):
-    def __init__(self, model, freeze_layers, freeze_iters, fc_freeze_iters):
+    def __init__(self, model, freeze_layers, freeze_iters):
         self._logger = logging.getLogger(__name__)
-
         if isinstance(model, DistributedDataParallel):
             model = model.module
         self.model = model
 
         self.freeze_layers = freeze_layers
         self.freeze_iters = freeze_iters
-        self.fc_freeze_iters = fc_freeze_iters
 
         self.is_frozen = False
-        self.fc_frozen = False
 
     def before_step(self):
         # Freeze specific layers
@@ -470,18 +475,6 @@ class LayerFreeze(HookBase):
         if self.trainer.iter >= self.freeze_iters and self.is_frozen:
             self.open_all_layer()
 
-        if self.trainer.max_iter - self.trainer.iter <= self.fc_freeze_iters \
-                and not self.fc_frozen:
-            self.freeze_classifier()
-
-    def freeze_classifier(self):
-        for p in self.model.heads.classifier.parameters():
-            p.requires_grad_(False)
-
-        self.fc_frozen = True
-        self._logger.info("Freeze classifier training for "
-                          "last {} iterations".format(self.fc_freeze_iters))
-
     def freeze_specific_layer(self):
         for layer in self.freeze_layers:
             if not hasattr(self.model, layer):
@@ -491,8 +484,6 @@ class LayerFreeze(HookBase):
             if name in self.freeze_layers:
                 # Change BN in freeze layers to eval mode
                 module.eval()
-                for p in module.parameters():
-                    p.requires_grad_(False)
 
         self.is_frozen = True
         freeze_layers = ", ".join(self.freeze_layers)
@@ -502,8 +493,6 @@ class LayerFreeze(HookBase):
         for name, module in self.model.named_children():
             if name in self.freeze_layers:
                 module.train()
-                for p in module.parameters():
-                    p.requires_grad_(True)
 
         self.is_frozen = False
 

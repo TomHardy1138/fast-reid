@@ -13,7 +13,8 @@ INPUT:
     SATURATION: 0.3
     HUE: 0.1
 
-  RATIO: (1., 1.)
+  CROP:
+    RATIO: (1., 1.)
 
 SOLVER:
   MAX_EPOCH: 100
@@ -21,6 +22,7 @@ SOLVER:
   BASE_LR: 0.05
   ETA_MIN_LR: 0.0005
 
+  NESTEROV: False
   MOMENTUM: 0.
 
 TEST:
